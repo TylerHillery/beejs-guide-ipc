@@ -1,0 +1,73 @@
+cmake_minimum_required(VERSION 3.21)
+project(c_project_template LANGUAGES C)
+
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+add_library(project_lib src/math_utils.c)
+target_include_directories(project_lib PUBLIC include)
+
+add_executable(hello src/main.c)
+target_link_libraries(hello PRIVATE project_lib)
+
+# Each standalone src/*.c file is a program (apart from main.c and library sources).
+# A nested directory containing main.c is one program built from all its .c files.
+file(GLOB standalone_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c")
+set(example_targets)
+foreach(source IN LISTS standalone_sources)
+    get_filename_component(name "${source}" NAME_WE)
+    if(name STREQUAL "main" OR name STREQUAL "math_utils")
+        continue()
+    endif()
+    add_executable(${name} "${source}")
+    target_link_libraries(${name} PRIVATE project_lib)
+    list(APPEND example_targets ${name})
+endforeach()
+
+file(GLOB_RECURSE lesson_sources CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c")
+foreach(source IN LISTS lesson_sources)
+    if(NOT source MATCHES "/main\\.c$")
+        continue()
+    endif()
+    get_filename_component(lesson_dir "${source}" DIRECTORY)
+    string(REPLACE "/" "_" name "${lesson_dir}")
+    if(TARGET ${name})
+        message(FATAL_ERROR "Lesson ${lesson_dir} produces duplicate target ${name}")
+    endif()
+    file(GLOB sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/${lesson_dir}/*.c")
+    add_executable(${name} ${sources})
+    target_link_libraries(${name} PRIVATE project_lib)
+    list(APPEND example_targets ${name})
+endforeach()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_library(munit STATIC lib/munit/munit.c)
+    target_include_directories(munit PUBLIC lib/munit)
+
+    add_executable(project_tests tests/test_main.c tests/test_math_utils.c)
+    target_link_libraries(project_tests PRIVATE project_lib munit)
+    add_test(NAME project_tests COMMAND project_tests)
+endif()
+
+set(project_targets project_lib hello ${example_targets})
+if(BUILD_TESTING)
+    list(APPEND project_targets project_tests)
+endif()
+
+foreach(target IN LISTS project_targets)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            target_compile_options(${target} PRIVATE -g -fno-omit-frame-pointer)
+        endif()
+        if(ENABLE_SANITIZERS)
+            target_compile_options(${target} PRIVATE -O1 -fsanitize=address,undefined)
+            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+endforeach()
